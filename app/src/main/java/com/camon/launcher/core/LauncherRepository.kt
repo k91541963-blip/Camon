@@ -158,6 +158,151 @@ ${report.logExcerpt}
         }
     }
 
+    // ===== OFFLINE HESAP YÖNETİMİ (Zalith Launcher 2 Varyantı) =====
+
+    private val _offlineSessions = MutableStateFlow<List<OfflineSession>>(emptyList())
+    val offlineSessions: StateFlow<List<OfflineSession>> = _offlineSessions.asStateFlow()
+
+    private val _launchConfigs = MutableStateFlow<List<LaunchConfig>>(emptyList())
+    val launchConfigs: StateFlow<List<LaunchConfig>> = _launchConfigs.asStateFlow()
+
+    private val _versions = MutableStateFlow<List<VersionInfo>>(emptyList())
+    val versions: StateFlow<List<VersionInfo>> = _versions.asStateFlow()
+
+    private val _javaSelections = MutableStateFlow<List<JavaSelection>>(emptyList())
+    val javaSelections: StateFlow<List<JavaSelection>> = _javaSelections.asStateFlow()
+
+    // --- Offline Hesaplar ---
+
+    fun createOfflineAccount(username: String): Account {
+        val existing = _accounts.value.firstOrNull { it.username == username && it.type == AccountType.OFFLINE }
+        val account = if (existing != null) existing else {
+            Account(type = AccountType.OFFLINE, username = username, offlineToken = UUID.randomUUID().toString())
+        }
+        val normalized = _accounts.value.map { it.copy(active = false) } + account.copy(active = true)
+        _accounts.value = normalized
+        persist()
+        return account
+    }
+
+    fun switchOfflineAccount(id: String) {
+        _accounts.value = _accounts.value.map { it.copy(active = it.id == id) }
+        val account = _accounts.value.firstOrNull { it.id == id }
+        if (account != null) {
+            _offlineSessions.value = (listOf(
+                OfflineSession(accountId = id, username = account.username)
+            ) + _offlineSessions.value).take(100)
+        }
+        persist()
+    }
+
+    fun removeOfflineAccount(id: String) {
+        _accounts.value = _accounts.value.filterNot { it.id == id }
+        _offlineSessions.value = _offlineSessions.value.filterNot { it.accountId == id }
+        _profiles.value = _profiles.value.map {
+            if (it.linkedAccountId == id) it.copy(linkedAccountId = "") else it
+        }
+        persist()
+    }
+
+    fun linkAccountToProfile(accountId: String, profileId: String) {
+        _profiles.value = _profiles.value.map {
+            if (it.id == profileId) it.copy(linkedAccountId = accountId) else it
+        }
+        persist()
+    }
+
+    fun unlinkAccountFromProfile(profileId: String) {
+        _profiles.value = _profiles.value.map {
+            if (it.id == profileId) it.copy(linkedAccountId = "") else it
+        }
+        persist()
+    }
+
+    fun activeOfflineAccount(): Account? {
+        return _accounts.value.firstOrNull { it.type == AccountType.OFFLINE && it.active }
+    }
+
+    fun offlineAccounts(): List<Account> {
+        return _accounts.value.filter { it.type == AccountType.OFFLINE }
+    }
+
+    // --- Başlatma Yapılandırması ---
+
+    fun saveLaunchConfig(config: LaunchConfig) {
+        val exists = _launchConfigs.value.any { it.profileId == config.profileId }
+        _launchConfigs.value = if (exists) {
+            _launchConfigs.value.map { if (it.profileId == config.profileId) config else it }
+        } else {
+            _launchConfigs.value + config
+        }
+        persist()
+    }
+
+    fun launchConfigForProfile(profileId: String): LaunchConfig? {
+        return _launchConfigs.value.firstOrNull { it.profileId == profileId }
+    }
+
+    fun removeLaunchConfig(profileId: String) {
+        _launchConfigs.value = _launchConfigs.value.filterNot { it.profileId == profileId }
+        persist()
+    }
+
+    // --- Minecraft Sürümleri ---
+
+    fun setVersions(versions: List<VersionInfo>) {
+        _versions.value = versions
+        persist()
+    }
+
+    fun addVersion(v: VersionInfo) {
+        _versions.value = _versions.value + v
+        persist()
+    }
+
+    fun removeVersion(id: String) {
+        _versions.value = _versions.value.filterNot { it.id == id }
+        persist()
+    }
+
+    // --- Java Seçimi ---
+
+    fun setJavaSelections(selections: List<JavaSelection>) {
+        _javaSelections.value = selections
+        persist()
+    }
+
+    fun addJavaSelection(s: JavaSelection) {
+        val normalized = if (s.isDefault) {
+            _javaSelections.value.map { it.copy(isDefault = false) } + s
+        } else {
+            _javaSelections.value + s
+        }
+        _javaSelections.value = normalized
+        persist()
+    }
+
+    fun defaultJavaSelection(): JavaSelection? {
+        return _javaSelections.value.firstOrNull { it.isDefault }
+    }
+
+    // --- Offline Oturum İzleme ---
+
+    fun endOfflineSession(sessionId: String, durationMs: Long) {
+        _offlineSessions.value = _offlineSessions.value.map {
+            if (it.id == sessionId) it.copy(durationMs = durationMs) else it
+        }
+        persist()
+    }
+
+    fun recordOfflinePlaytime(accountId: String, durationMs: Long) {
+        val now = System.currentTimeMillis()
+        _offlineSessions.value = (listOf(
+            OfflineSession(accountId = accountId, username = activeOfflineAccount()?.username ?: "", durationMs = durationMs)
+        ) + _offlineSessions.value).take(100)
+        persist()
+    }
+
     fun recordSession(profile: Profile, durationMs: Long, avgFps: Int, minFps: Int, maxFps: Int, crashed: Boolean) {
         val updated = profile.copy(
             playTimeMs = profile.playTimeMs + durationMs,
@@ -308,6 +453,10 @@ ${report.logExcerpt}
         root.put("downloads", JSONArray().also { arr -> _downloads.value.forEach { arr.put(downloadToJson(it)) } })
         root.put("crashes", JSONArray().also { arr -> _crashReports.value.forEach { arr.put(crashToJson(it)) } })
         root.put("settings", settingsToJson(_settings.value))
+        root.put("offlineSessions", JSONArray().also { arr -> _offlineSessions.value.forEach { arr.put(offlineSessionToJson(it)) } })
+        root.put("launchConfigs", JSONArray().also { arr -> _launchConfigs.value.forEach { arr.put(launchConfigToJson(it)) } })
+        root.put("versions", JSONArray().also { arr -> _versions.value.forEach { arr.put(versionToJson(it)) } })
+        root.put("javaSelections", JSONArray().also { arr -> _javaSelections.value.forEach { arr.put(javaSelectionToJson(it)) } })
         prefs.edit().putString("state", root.toString()).apply()
     }
 
@@ -327,6 +476,10 @@ ${report.logExcerpt}
             _gamepads.value = parseArray(root, "gamepads") { gamepadFromJson(it) }
             _downloads.value = parseArray(root, "downloads") { downloadFromJson(it) }
             _crashReports.value = parseArray(root, "crashes") { crashFromJson(it) }
+            _offlineSessions.value = parseArray(root, "offlineSessions") { offlineSessionFromJson(it) }
+            _launchConfigs.value = parseArray(root, "launchConfigs") { launchConfigFromJson(it) }
+            _versions.value = parseArray(root, "versions") { versionFromJson(it) }
+            _javaSelections.value = parseArray(root, "javaSelections") { javaSelectionFromJson(it) }
             root.optJSONObject("settings")?.let { _settings.value = settingsFromJson(it) }
             _refreshFavorites()
         } catch (_: Exception) {
@@ -401,8 +554,9 @@ ${report.logExcerpt}
         put("loader", p.loader.name); put("loaderVersion", p.loaderVersion)
         put("ramMb", p.ramMb); put("javaMajor", p.javaMajor); put("renderer", p.renderer.name)
         put("performance", p.performance.name); put("jvmArgs", p.jvmArgs); put("controlLayout", p.controlLayout)
-        put("createdAt", p.createdAt); put("playTimeMs", p.playTimeMs); put("lastPlayed", p.lastPlayed)
         put("isFavorite", p.isFavorite); put("isArchived", p.isArchived)
+        put("linkedAccountId", p.linkedAccountId); put("gameDir", p.gameDir); put("customArgs", p.customArgs)
+        put("createdAt", p.createdAt); put("playTimeMs", p.playTimeMs); put("lastPlayed", p.lastPlayed)
     }
 
     private fun profileFromJson(o: JSONObject) = Profile(
@@ -415,7 +569,10 @@ ${report.logExcerpt}
         jvmArgs = o.optString("jvmArgs"), controlLayout = o.optString("controlLayout", "varsayılan"),
         createdAt = o.optLong("createdAt"), playTimeMs = o.optLong("playTimeMs"), lastPlayed = o.optLong("lastPlayed"),
         isFavorite = o.optBoolean("isFavorite", false),
-        isArchived = o.optBoolean("isArchived", false)
+        isArchived = o.optBoolean("isArchived", false),
+        linkedAccountId = o.optString("linkedAccountId", ""),
+        gameDir = o.optString("gameDir", ""),
+        customArgs = o.optString("customArgs", "")
     )
 
     private fun modToJson(m: ModItem) = JSONObject().apply {
@@ -458,12 +615,15 @@ ${report.logExcerpt}
     private fun accountToJson(a: Account) = JSONObject().apply {
         put("id", a.id); put("type", a.type.name); put("username", a.username)
         put("uuid", a.uuid); put("active", a.active)
+        put("offlineToken", a.offlineToken); put("lastLogin", a.lastLogin); put("createdAt", a.createdAt)
     }
 
     private fun accountFromJson(o: JSONObject) = Account(
         id = o.optString("id"),
         type = runCatching { AccountType.valueOf(o.optString("type")) }.getOrDefault(AccountType.OFFLINE),
-        username = o.optString("username"), uuid = o.optString("uuid"), active = o.optBoolean("active")
+        username = o.optString("username"), uuid = o.optString("uuid"), active = o.optBoolean("active"),
+        offlineToken = o.optString("offlineToken", ""), lastLogin = o.optLong("lastLogin", 0),
+        createdAt = o.optLong("createdAt", System.currentTimeMillis())
     )
 
     private fun sessionToJson(s: SessionRecord) = JSONObject().apply {
@@ -551,5 +711,47 @@ ${report.logExcerpt}
         autoBackup = o.optBoolean("autoBackup", true), backupIntervalHours = o.optInt("backupIntervalHours", 24),
         downloadConcurrency = o.optInt("downloadConcurrency", 2), wizardCompleted = o.optBoolean("wizardCompleted", false),
         fpsOverlay = o.optBoolean("fpsOverlay", false), locale = o.optString("locale", "tr")
+    )
+
+    private fun offlineSessionToJson(s: OfflineSession) = JSONObject().apply {
+        put("id", s.id); put("accountId", s.accountId); put("username", s.username)
+        put("startedAt", s.startedAt); put("durationMs", s.durationMs)
+    }
+
+    private fun offlineSessionFromJson(o: JSONObject) = OfflineSession(
+        id = o.optString("id"), accountId = o.optString("accountId"), username = o.optString("username"),
+        startedAt = o.optLong("startedAt"), durationMs = o.optLong("durationMs")
+    )
+
+    private fun launchConfigToJson(c: LaunchConfig) = JSONObject().apply {
+        put("id", c.id); put("profileId", c.profileId); put("javaMajor", c.javaMajor)
+        put("ramMb", c.ramMb); put("jvmArgs", c.jvmArgs); put("gameArgs", c.gameArgs)
+        put("gameDir", c.gameDir); put("createdAt", c.createdAt)
+    }
+
+    private fun launchConfigFromJson(o: JSONObject) = LaunchConfig(
+        id = o.optString("id"), profileId = o.optString("profileId"), javaMajor = o.optInt("javaMajor", 17),
+        ramMb = o.optInt("ramMb", 2048), jvmArgs = o.optString("jvmArgs", ""),
+        gameArgs = o.optString("gameArgs", ""), gameDir = o.optString("gameDir", ""),
+        createdAt = o.optLong("createdAt")
+    )
+
+    private fun versionToJson(v: VersionInfo) = JSONObject().apply {
+        put("id", v.id); put("type", v.type); put("releaseTime", v.releaseTime)
+        put("downloadUrl", v.downloadUrl)
+    }
+
+    private fun versionFromJson(o: JSONObject) = VersionInfo(
+        id = o.optString("id"), type = o.optString("type"), releaseTime = o.optString("releaseTime"),
+        downloadUrl = o.optString("downloadUrl")
+    )
+
+    private fun javaSelectionToJson(s: JavaSelection) = JSONObject().apply {
+        put("major", s.major); put("path", s.path); put("name", s.name); put("isDefault", s.isDefault)
+    }
+
+    private fun javaSelectionFromJson(o: JSONObject) = JavaSelection(
+        major = o.optInt("major"), path = o.optString("path"), name = o.optString("name"),
+        isDefault = o.optBoolean("isDefault", false)
     )
 }

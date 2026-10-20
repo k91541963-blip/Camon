@@ -42,6 +42,9 @@ data class Profile(
     val controlLayout: String = "varsayılan",
     val isFavorite: Boolean = false,
     val isArchived: Boolean = false,
+    val linkedAccountId: String = "",
+    val gameDir: String = "",
+    val customArgs: String = "",
     val createdAt: Long = System.currentTimeMillis(),
     val playTimeMs: Long = 0L,
     val lastPlayed: Long = 0L
@@ -150,7 +153,10 @@ data class Account(
     val type: AccountType,
     val username: String,
     val uuid: String = "",
-    val active: Boolean = false
+    val active: Boolean = false,
+    val offlineToken: String = "",
+    val lastLogin: Long = 0,
+    val createdAt: Long = System.currentTimeMillis()
 )
 
 data class TouchControl(
@@ -227,4 +233,37 @@ data class PlatformModIssue(
     val platform: String,
     val reason: String,
     val severity: Severity
+)
+
+data class LaunchConfig(
+    val id: String = UUID.randomUUID().toString(),
+    val profileId: String,
+    val javaMajor: Int = 17,
+    val ramMb: Int = 2048,
+    val jvmArgs: String = "",
+    val gameArgs: String = "",
+    val gameDir: String = "",
+    val createdAt: Long = System.currentTimeMillis()
+)
+
+data class VersionInfo(
+    val id: String,
+    val type: String,
+    val releaseTime: String,
+    val downloadUrl: String? = null
+)
+
+data class JavaSelection(
+    val major: Int,
+    val path: String,
+    val name: String,
+    val isDefault: Boolean = false
+)
+
+data class OfflineSession(
+    val id: String = UUID.randomUUID().toString(),
+    val accountId: String,
+    val username: String,
+    val startedAt: Long = System.currentTimeMillis(),
+    val durationMs: Long = 0
 )
