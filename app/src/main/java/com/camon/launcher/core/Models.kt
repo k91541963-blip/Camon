@@ -221,3 +221,10 @@ enum class IssueKind(val display: String) {
     CONFLICT("Mod çakışması"),
     WRONG_LOADER("Yanlış yükleyici")
 }
+
+data class PlatformModIssue(
+    val modName: String,
+    val platform: String,
+    val reason: String,
+    val severity: Severity
+)

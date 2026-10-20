@@ -41,7 +41,10 @@ object ModCompatibility {
             listOf("optifine", "sodium"),
             listOf("sodium", "rubidium"),
             listOf("iris", "optifine"),
-            listOf("fabric-api", "quilted-fabric-api")
+            listOf("fabric-api", "quilted-fabric-api"),
+            listOf("webdisplays", "optifine"),
+            listOf("webdisplays", "sodium"),
+            listOf("webdisplays", "iris")
         )
         for (group in conflictGroups) {
             val present = group.filter { g -> namesLower.any { it.contains(g) } }
@@ -61,5 +64,51 @@ object ModCompatibility {
         if (issues.isEmpty()) return "Tüm modlar uyumlu görünüyor."
         val byKind = issues.groupingBy { it.kind }.eachCount()
         return byKind.entries.joinToString("  •  ") { "${it.key.display}: ${it.value}" }
+    }
+
+    // ---- Android özel uyumluluk uyarıları ----
+    private val androidProblematic = listOf(
+        PlatformModIssue(
+            modName = "webdisplays",
+            platform = "android",
+            reason = "WebDisplays MCEF (Chromium) kütüphanesine bağımlıdır; MCEF sadece masaüstü x86_64 için derlenmiş olup Android/ARM'de çalışmaz. Beyaz ekran veya kütüphane yükleme hatası verir.",
+            severity = Severity.DANGER
+        ),
+        PlatformModIssue(
+            modName = "veil",
+            platform = "android",
+            reason = "imgui-java yerel kitaplığı sadece x86_64 natives içerir; ARM64 Android'de UnsatisfiedLinkError/SIGSEGV ile çöker.",
+            severity = Severity.DANGER
+        ),
+        PlatformModIssue(
+            modName = "sable",
+            platform = "android",
+            reason = "Veil'e bağımlıdır; aynı x86_64 native kütüphane sorununu taşır.",
+            severity = Severity.DANGER
+        ),
+        PlatformModIssue(
+            modName = "optifine",
+            platform = "android",
+            reason = "Diğer modlarla uyumsuz davranabilir ve Android renderer'da çökme yapabilir; Embeddium/Rubidium tercih edin.",
+            severity = Severity.WARN
+        ),
+        PlatformModIssue(
+            modName = "distant horizons",
+            platform = "android",
+            reason = "ARM64 SQL yerel kitaplıkları doğru yüklenemeyebilir ve çökmeye neden olur.",
+            severity = Severity.WARN
+        )
+    )
+
+    fun androidProblematicMods(mods: List<ModItem>): List<PlatformModIssue> {
+        val namesLower = mods.map { it.name.lowercase() }
+        return androidProblematic.filter { issue ->
+            namesLower.any { it.contains(issue.modName) }
+        }
+    }
+
+    fun androidSummary(issues: List<PlatformModIssue>): String {
+        if (issues.isEmpty()) return "Android'de bilinen sorunlu mod bulunamadı."
+        return issues.joinToString("  •  ") { "${it.modName}: ${it.reason}" }
     }
 }

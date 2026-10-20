@@ -69,6 +69,18 @@ object CrashAnalyzer {
             "Oturum hatası",
             "Microsoft oturumu geçersiz veya süresi dolmuş.",
             "Hesapları yeniden doğrula."
+        ),
+        Rule(
+            listOf("mcef", "webdisplays", "webdisplays", "libGLESv2", "cefapp", "chromium embedded"),
+            "WebDisplay / MCEF tarayıcı hatası",
+            "WebDisplays modu MCEF (Chromium) kütüphanesini yükleyemedi. Bu kütüphane masaüstü x86_64 için derlenmiş olup Android/ARM'de çalışmaz.",
+            "WebDisplays modunu Android'de kullanmayın; modu devre dışı bırakın veya kaldırın."
+        ),
+        Rule(
+            listOf("white screen", "ekran beyaz", "mcef-libraries", "unsatisfiedlinkerror"),
+            "Yerel kitaplık yüklenemedi",
+            "Modun sağladığı .so yerel kütüphanesi cihaz mimarisiyle uyumsuz (örneğin x86_64 lib ARM64 Android'de).",
+            "Mimariye uygun versiyonu kullanın veya modu kaldırın."
         )
     )
 
