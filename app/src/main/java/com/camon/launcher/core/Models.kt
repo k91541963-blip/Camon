@@ -40,6 +40,8 @@ data class Profile(
     val performance: PerformanceProfile = PerformanceProfile.BALANCED,
     val jvmArgs: String = "",
     val controlLayout: String = "varsayılan",
+    val isFavorite: Boolean = false,
+    val isArchived: Boolean = false,
     val createdAt: Long = System.currentTimeMillis(),
     val playTimeMs: Long = 0L,
     val lastPlayed: Long = 0L
@@ -54,7 +56,8 @@ data class ModItem(
     val mcVersions: List<String>,
     val enabled: Boolean = true,
     val dependencies: List<String> = emptyList(),
-    val side: String = "both"
+    val side: String = "both",
+    val category: String = "genel"
 )
 
 data class ShaderPack(

@@ -1,6 +1,7 @@
 package com.camon.launcher.core
 
 import android.content.Context
+import java.util.UUID
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -15,7 +16,9 @@ data class LauncherSettings(
     val autoBackup: Boolean = true,
     val backupIntervalHours: Int = 24,
     val downloadConcurrency: Int = 2,
-    val wizardCompleted: Boolean = false
+    val wizardCompleted: Boolean = false,
+    val fpsOverlay: Boolean = false,
+    val locale: String = "tr"
 )
 
 class LauncherRepository(context: Context) {
@@ -58,6 +61,9 @@ class LauncherRepository(context: Context) {
     private val _settings = MutableStateFlow(LauncherSettings())
     val settings: StateFlow<LauncherSettings> = _settings.asStateFlow()
 
+    private val _favorites = MutableStateFlow<List<Profile>>(emptyList())
+    val favorites: StateFlow<List<Profile>> = _favorites.asStateFlow()
+
     init {
         load()
     }
@@ -65,17 +71,91 @@ class LauncherRepository(context: Context) {
     // ---- Profiles ----
     fun addProfile(p: Profile) {
         _profiles.value = _profiles.value + p
+        _refreshFavorites()
         persist()
     }
 
     fun updateProfile(p: Profile) {
         _profiles.value = _profiles.value.map { if (it.id == p.id) p else it }
+        _refreshFavorites()
         persist()
     }
 
     fun deleteProfile(id: String) {
         _profiles.value = _profiles.value.filterNot { it.id == id }
+        _refreshFavorites()
         persist()
+    }
+
+    fun toggleFavorite(id: String) {
+        _profiles.value = _profiles.value.map { if (it.id == id) it.copy(isFavorite = !it.isFavorite) else it }
+        _refreshFavorites()
+        persist()
+    }
+
+    private fun _refreshFavorites() {
+        _favorites.value = _profiles.value.filter { it.isFavorite }
+    }
+
+    fun toggleArchive(id: String) {
+        _profiles.value = _profiles.value.map { if (it.id == id) it.copy(isArchived = !it.isArchived) else it }
+        _refreshFavorites()
+        persist()
+    }
+
+    fun cloneProfile(id: String): String? {
+        val original = _profiles.value.firstOrNull { it.id == id } ?: return null
+        val clone = original.copy(
+            id = UUID.randomUUID().toString(),
+            name = "${original.name} (Kopya)",
+            createdAt = System.currentTimeMillis(),
+            playTimeMs = 0,
+            lastPlayed = 0
+        )
+        addProfile(clone)
+        return clone.id
+    }
+
+    fun activeProfiles(): List<Profile> {
+        return _profiles.value.filterNot { it.isArchived }
+    }
+
+    fun recentProfiles(limit: Int = 5): List<Profile> {
+        return _profiles.value.filterNot { it.isArchived }
+            .sortedByDescending { it.lastPlayed }
+            .take(limit)
+    }
+
+    // ---- Mods ----
+    fun searchMods(query: String): List<ModItem> {
+        val q = query.lowercase()
+        return _mods.value.filter { it.name.lowercase().contains(q) || it.fileName.lowercase().contains(q) }
+    }
+
+    fun filterModsByCategory(category: String): List<ModItem> {
+        return _mods.value.filter { it.category == category }
+    }
+
+    fun applyRecommendedProfile(profileId: String, deviceInfo: DeviceInfo, gpuInfo: GpuInfo) {
+        val profile = _profiles.value.firstOrNull { it.id == profileId } ?: return
+        val recommended = DeviceAnalyzer.recommendPerformanceProfile(deviceInfo, gpuInfo)
+        val recommendedRam = DeviceAnalyzer.recommendRam(deviceInfo)
+        updateProfile(profile.copy(performance = recommended, ramMb = recommendedRam))
+    }
+
+    fun exportCrashReport(id: String): String? {
+        return _crashReports.value.firstOrNull { it.id == id }?.let { report ->
+            """CRASH RAPORU
+Id: ${report.id}
+Profil: ${report.profileName}
+Tarih: ${report.timestamp}
+Başlık: ${report.title}
+Özet: ${report.summary}
+Nedenler: ${report.causes.joinToString(", ")}
+Log Özeti:
+${report.logExcerpt}
+""".trimIndent()
+        }
     }
 
     fun recordSession(profile: Profile, durationMs: Long, avgFps: Int, minFps: Int, maxFps: Int, crashed: Boolean) {
@@ -248,6 +328,7 @@ class LauncherRepository(context: Context) {
             _downloads.value = parseArray(root, "downloads") { downloadFromJson(it) }
             _crashReports.value = parseArray(root, "crashes") { crashFromJson(it) }
             root.optJSONObject("settings")?.let { _settings.value = settingsFromJson(it) }
+            _refreshFavorites()
         } catch (_: Exception) {
         }
     }
@@ -321,6 +402,7 @@ class LauncherRepository(context: Context) {
         put("ramMb", p.ramMb); put("javaMajor", p.javaMajor); put("renderer", p.renderer.name)
         put("performance", p.performance.name); put("jvmArgs", p.jvmArgs); put("controlLayout", p.controlLayout)
         put("createdAt", p.createdAt); put("playTimeMs", p.playTimeMs); put("lastPlayed", p.lastPlayed)
+        put("isFavorite", p.isFavorite); put("isArchived", p.isArchived)
     }
 
     private fun profileFromJson(o: JSONObject) = Profile(
@@ -331,13 +413,15 @@ class LauncherRepository(context: Context) {
         renderer = runCatching { RendererType.valueOf(o.optString("renderer")) }.getOrDefault(RendererType.OPENGL),
         performance = runCatching { PerformanceProfile.valueOf(o.optString("performance")) }.getOrDefault(PerformanceProfile.BALANCED),
         jvmArgs = o.optString("jvmArgs"), controlLayout = o.optString("controlLayout", "varsayılan"),
-        createdAt = o.optLong("createdAt"), playTimeMs = o.optLong("playTimeMs"), lastPlayed = o.optLong("lastPlayed")
+        createdAt = o.optLong("createdAt"), playTimeMs = o.optLong("playTimeMs"), lastPlayed = o.optLong("lastPlayed"),
+        isFavorite = o.optBoolean("isFavorite", false),
+        isArchived = o.optBoolean("isArchived", false)
     )
 
     private fun modToJson(m: ModItem) = JSONObject().apply {
         put("id", m.id); put("name", m.name); put("fileName", m.fileName); put("version", m.version)
         put("loader", m.loader.name); put("mcVersions", JSONArray(m.mcVersions)); put("enabled", m.enabled)
-        put("dependencies", JSONArray(m.dependencies)); put("side", m.side)
+        put("dependencies", JSONArray(m.dependencies)); put("side", m.side); put("category", m.category)
     }
 
     private fun modFromJson(o: JSONObject) = ModItem(
@@ -347,7 +431,8 @@ class LauncherRepository(context: Context) {
         mcVersions = o.optJSONArray("mcVersions")?.let { a -> (0 until a.length()).map { a.getString(it) } } ?: emptyList(),
         enabled = o.optBoolean("enabled", true),
         dependencies = o.optJSONArray("dependencies")?.let { a -> (0 until a.length()).map { a.getString(it) } } ?: emptyList(),
-        side = o.optString("side", "both")
+        side = o.optString("side", "both"),
+        category = o.optString("category", "genel")
     )
 
     private fun shaderToJson(s: ShaderPack) = JSONObject().apply {
@@ -457,12 +542,14 @@ class LauncherRepository(context: Context) {
         put("performanceOverlay", s.performanceOverlay); put("lightModeLauncher", s.lightModeLauncher)
         put("autoBackup", s.autoBackup); put("backupIntervalHours", s.backupIntervalHours)
         put("downloadConcurrency", s.downloadConcurrency); put("wizardCompleted", s.wizardCompleted)
+        put("fpsOverlay", s.fpsOverlay); put("locale", s.locale)
     }
 
     private fun settingsFromJson(o: JSONObject) = LauncherSettings(
         darkTheme = o.optBoolean("darkTheme", true), animations = o.optBoolean("animations", true),
         performanceOverlay = o.optBoolean("performanceOverlay", true), lightModeLauncher = o.optBoolean("lightModeLauncher", true),
         autoBackup = o.optBoolean("autoBackup", true), backupIntervalHours = o.optInt("backupIntervalHours", 24),
-        downloadConcurrency = o.optInt("downloadConcurrency", 2), wizardCompleted = o.optBoolean("wizardCompleted", false)
+        downloadConcurrency = o.optInt("downloadConcurrency", 2), wizardCompleted = o.optBoolean("wizardCompleted", false),
+        fpsOverlay = o.optBoolean("fpsOverlay", false), locale = o.optString("locale", "tr")
     )
 }
